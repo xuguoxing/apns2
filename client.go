@@ -182,7 +182,41 @@ func (c *Client) PushWithContext(ctx Context, n *Notification) (*Response, error
 	}
 
 	setHeaders(request, n)
+	response, err := c.HTTPClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
 
+	r := &Response{}
+	r.StatusCode = response.StatusCode
+	r.ApnsID = response.Header.Get("apns-id")
+	r.ApnsUniqueID = response.Header.Get("apns-unique-id")
+
+	decoder := json.NewDecoder(response.Body)
+	if err := decoder.Decode(r); err != nil && err != io.EOF {
+		return &Response{}, err
+	}
+	return r, nil
+}
+
+func (c *Client) PushBroadcastWithContext(ctx Context, n *Notification) (*Response, error) {
+	payload, err := json.Marshal(n)
+	if err != nil {
+		return nil, err
+	}
+
+	url := c.Host + "/4/broadcasts/apps/" + n.Topic
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	if c.Token != nil {
+		c.setTokenHeader(request)
+	}
+
+	setBroadcastHeaders(request, n)
 	response, err := c.HTTPClient.Do(request)
 	if err != nil {
 		return nil, err
@@ -235,4 +269,27 @@ func setHeaders(r *http.Request, n *Notification) {
 	} else {
 		r.Header.Set("apns-push-type", string(PushTypeAlert))
 	}
+}
+
+func setBroadcastHeaders(r *http.Request, n *Notification) {
+	r.Header.Set("Content-Type", "application/json; charset=utf-8")
+	if n.ApnsID != "" {
+		r.Header.Set("apns-request-id", n.ApnsID)
+	}
+	if n.Priority > 0 {
+		r.Header.Set("apns-priority", strconv.Itoa(n.Priority))
+	}
+	if n.Expiration.After(time.Unix(0, 0)) {
+		r.Header.Set("apns-expiration", strconv.FormatInt(n.Expiration.Unix(), 10))
+	}
+	if n.PushType != "" {
+		r.Header.Set("apns-push-type", string(n.PushType))
+	} else {
+		r.Header.Set("apns-push-type", string(PushTypeAlert))
+	}
+
+	if n.ChannelID != "" {
+		r.Header.Set("apns-channel-id", n.ChannelID)
+	}
+
 }
